@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	log.Print("Service started...")
+	log.Print("service started...")
 
 	if err := godotenv.Load(); err != nil {
 		log.Fatal("Error loading .env file: ", err)
@@ -76,114 +76,133 @@ func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 
 	switch cliArgs[0] {
 	case "backup":
-		if len(cliArgs) < 2 {
-			return fmt.Errorf("for backup, one of the all-database-full-backup, database=db_name, or databases=db1,db2,db3 must be provided")
-		}
-		arg := cliArgs[1]
-		switch {
-		case arg == "all-database-full-backup":
-			// All databases full backup
-			if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil); err != nil {
-				return fmt.Errorf("all-database full backup failed: %w", err)
-			}
-		case strings.HasPrefix(arg, "database="):
-			// Single database full backup
-			parts := strings.SplitN(arg, "=", 2)
-			if len(parts) != 2 || parts[1] == "" {
-				return fmt.Errorf("invalid argument for single database backup. Usage: database=db_name")
-			}
-			database := parts[1]
-			if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil); err != nil {
-				return fmt.Errorf("database full backup failed: %w", err)
-			}
-		case strings.HasPrefix(arg, "databases="):
-			// Multiple databases full backup
-			parts := strings.SplitN(arg, "=", 2)
-			if len(parts) != 2 || parts[1] == "" {
-				return fmt.Errorf("invalid argument for multiple databases backup. Usage: databases=db1,db2,db3")
-			}
-			dbList := strings.Split(parts[1], ",")
-			if err := mysqlDB.MysqlFullBackup(dbConn, false, "", dbList); err != nil {
-				return fmt.Errorf("multiple databases full backup failed: %w", err)
-			}
-		default:
-			return fmt.Errorf("unknown backup type: %s", arg)
+		if err := backupCli(cliArgs, mysqlDB, dbConn); err != nil {
+			return fmt.Errorf("backup failed: %w", err)
 		}
 	case "restore":
-		// Expect restore command to have backupS3Dir and restoreDir arguments.
-		var backupS3Dir, restoreDir string
-		for _, arg := range cliArgs[1:] {
-			if strings.HasPrefix(arg, "backup-s3-dir=") {
-				parts := strings.SplitN(arg, "=", 2)
-				if len(parts) == 2 {
-					backupS3Dir = parts[1]
-				}
-			} else if strings.HasPrefix(arg, "restore-dir=") {
-				parts := strings.SplitN(arg, "=", 2)
-				if len(parts) == 2 {
-					restoreDir = parts[1]
-				}
-			}
-		}
-		if backupS3Dir == "" || restoreDir == "" {
-			return fmt.Errorf("for restore, both backup-s3-dir and restore-dir must be provided (e.g., backup-s3-dir=your/s3/path restore-dir=/your/restore/path)")
-		}
-		arg := cliArgs[1]
-		switch {
-		case arg == "all-database-full-restore":
-			if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, true, "", nil); err != nil {
-				return fmt.Errorf("restore failed: %w", err)
-			}
-		case strings.HasPrefix(arg, "database="):
-			parts := strings.SplitN(arg, "=", 2)
-			if len(parts) != 2 || parts[1] == "" {
-				return fmt.Errorf("invalid argument for single database restore. Usage: database=db_name")
-			}
-			database := parts[1]
-			if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, false, database, nil); err != nil {
-				return fmt.Errorf("restore failed: %w", err)
-			}
-		case strings.HasPrefix(arg, "databases="):
-			parts := strings.SplitN(arg, "=", 2)
-			if len(parts) != 2 || parts[1] == "" {
-				return fmt.Errorf("invalid argument for multiple databases restore. Usage: databases=db1,db2,db3")
-			}
-			dbList := strings.Split(parts[1], ",")
-			if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, false, "", dbList); err != nil {
-				return fmt.Errorf("restore failed: %w", err)
-			}
-		default:
-			return fmt.Errorf("unknown restore type: %s", arg)
+		if err := restoreCli(cliArgs, mysqlDB); err != nil {
+			return fmt.Errorf("restore failed: %w", err)
 		}
 	case "incremental-backup":
 		if err := mysqlDB.MysqlIncrementalBackup(context.Background()); err != nil {
 			return fmt.Errorf("incremental backup failed: %w", err)
 		}
 	case "enable-all-backup-scheduler":
-		var weekday, hourStr string
-		for _, arg := range cliArgs[1:] {
-			if strings.HasPrefix(arg, "weekday=") {
-				parts := strings.SplitN(arg, "=", 2)
-				if len(parts) == 2 {
-					weekday = parts[1]
-				}
-			} else if strings.HasPrefix(arg, "hour=") {
-				parts := strings.SplitN(arg, "=", 2)
-				if len(parts) == 2 {
-					hourStr = parts[1]
-				}
-			}
+		if err := allBacupCli(cliArgs, mysqlDB, dbConn); err != nil {
+			return fmt.Errorf("enable all backup scheduler failed: %w", err)
 		}
-		if weekday == "" || hourStr == "" {
-			log.Fatal("for enable-all-backup-scheduler, both weekday and hour must be provided (e.g., weekday=Mon hour=00:00)")
-		}
-		log.Printf("Enabling backup scheduler every %s at %s", weekday, hourStr)
-		if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr); err != nil {
-			log.Fatalf("Failed to enable backup scheduler: %v", err)
-		}
-		select {}
 	default:
 		return fmt.Errorf("invalid command: %s, should be one of backup, restore, incremental-backup, enable-all-backup-scheduler", cliArgs[0])
 	}
 	return nil
+}
+
+func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
+	if len(cliArgs) < 2 {
+		return fmt.Errorf("for backup, one of the all-database-full-backup, database=db_name, or databases=db1,db2,db3 must be provided")
+	}
+	arg := cliArgs[1]
+	switch {
+	case arg == "all-database-full-backup":
+		// All databases full backup
+		if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil); err != nil {
+			return fmt.Errorf("all-database full backup failed: %w", err)
+		}
+	case strings.HasPrefix(arg, "database="):
+		// Single database full backup
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return fmt.Errorf("invalid argument for single database backup. Usage: database=db_name")
+		}
+		database := parts[1]
+		if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil); err != nil {
+			return fmt.Errorf("database full backup failed: %w", err)
+		}
+	case strings.HasPrefix(arg, "databases="):
+		// Multiple databases full backup
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return fmt.Errorf("invalid argument for multiple databases backup. Usage: databases=db1,db2,db3")
+		}
+		dbList := strings.Split(parts[1], ",")
+		if err := mysqlDB.MysqlFullBackup(dbConn, false, "", dbList); err != nil {
+			return fmt.Errorf("multiple databases full backup failed: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown backup type: %s", arg)
+	}
+	return nil
+}
+
+func restoreCli(cliArgs []string, mysqlDB *DB) error {
+	var backupS3Dir, restoreDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-s3-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupS3Dir = parts[1]
+			}
+		} else if strings.HasPrefix(arg, "restore-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				restoreDir = parts[1]
+			}
+		}
+	}
+	if backupS3Dir == "" || restoreDir == "" {
+		return fmt.Errorf("for restore, both backup-s3-dir and restore-dir must be provided (e.g., backup-s3-dir=your/s3/path restore-dir=/your/restore/path)")
+	}
+	arg := cliArgs[1]
+	switch {
+	case arg == "all-database-full-restore":
+		if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, true, "", nil); err != nil {
+			return fmt.Errorf("restore failed: %w", err)
+		}
+	case strings.HasPrefix(arg, "database="):
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return fmt.Errorf("invalid argument for single database restore. Usage: database=db_name")
+		}
+		database := parts[1]
+		if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, false, database, nil); err != nil {
+			return fmt.Errorf("restore failed: %w", err)
+		}
+	case strings.HasPrefix(arg, "databases="):
+		parts := strings.SplitN(arg, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return fmt.Errorf("invalid argument for multiple databases restore. Usage: databases=db1,db2,db3")
+		}
+		dbList := strings.Split(parts[1], ",")
+		if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, false, "", dbList); err != nil {
+			return fmt.Errorf("restore failed: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown restore type: %s", arg)
+	}
+	return nil
+}
+
+func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
+	var weekday, hourStr string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "weekday=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				weekday = parts[1]
+			}
+		} else if strings.HasPrefix(arg, "hour=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				hourStr = parts[1]
+			}
+		}
+	}
+	if weekday == "" || hourStr == "" {
+		log.Fatal("for enable-all-backup-scheduler, both weekday and hour must be provided (e.g., weekday=Mon hour=00:00)")
+	}
+	log.Printf("Enabling backup scheduler every %s at %s", weekday, hourStr)
+	if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr); err != nil {
+		log.Fatalf("Failed to enable backup scheduler: %v", err)
+	}
+	select {}
 }

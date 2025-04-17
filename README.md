@@ -74,7 +74,6 @@ The service can be started with the following CLI arguments:
 
 - `main()`: Entry point of the service. Initializes the database connection and performs full and incremental backups.
 - `initializeDB()`: Initializes the database configuration from environment variables.
-- `getEnv(key string)`: Helper function to get environment variables.
 - `CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB)`: Handles command-line arguments for backup and restore operations.
 
 ### `model.go`

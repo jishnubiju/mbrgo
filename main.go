@@ -93,11 +93,26 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	if len(cliArgs) < 2 {
 		return fmt.Errorf("for backup, one of the all-database-full-backup, database=db_name, or databases=db1,db2,db3 must be provided")
 	}
+
+	var backupLocalDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-s3-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
+		}
+	}
+
+	if backupLocalDir == "" {
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-s3-dir=your/path)")
+	}
+
 	arg := cliArgs[1]
 	switch {
 	case arg == "all-database-full-backup":
 		// All databases full backup
-		if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil); err != nil {
+		if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
 			return fmt.Errorf("all database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "database="):
@@ -107,7 +122,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			return fmt.Errorf("invalid argument for single database backup. Usage: database=db_name")
 		}
 		database := parts[1]
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil); err != nil {
+		if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil, backupLocalDir); err != nil {
 			return fmt.Errorf("database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "databases="):
@@ -122,7 +137,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			cleanedDatabase := strings.Trim(database, " ")
 			cleanedDbList = append(cleanedDbList, cleanedDatabase)
 		}
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, "", cleanedDbList); err != nil {
+		if err := mysqlDB.MysqlFullBackup(dbConn, false, "", cleanedDbList, backupLocalDir); err != nil {
 			return fmt.Errorf("multiple databases full backup failed: %w", err)
 		}
 	default:

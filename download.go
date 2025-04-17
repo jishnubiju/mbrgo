@@ -49,9 +49,9 @@ func s3Download(backupS3Dir string, restorePath string) error {
 		log.Printf("Downloading %s to %s", key, destFile)
 
 		if err := downloadFile(ctx, downloader, bucket, key, destFile); err != nil {
-			log.Printf("Failed to download file %s: %v", key, err)
+			log.Printf("failed to download file %s: %v", key, err)
 		} else {
-			log.Printf("Download successful for file %s", key)
+			log.Printf("download successful for file %s", key)
 		}
 	}
 	return nil

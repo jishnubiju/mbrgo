@@ -65,7 +65,7 @@ func StreamBinlogToS3(data []byte, fileName string) error {
 }
 
 func UploadBufferToS3(data []byte, fileName string) error {
-	log.Print("Upload buffer to S3 function started...")
+	log.Print("upload buffer to S3 function started...")
 
 	bucket := os.Getenv("AWS_S3_BUCKET")
 	if bucket == "" {

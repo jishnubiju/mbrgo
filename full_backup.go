@@ -9,10 +9,9 @@ import (
 	"time"
 )
 
-func (db *DB) MysqlFullBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string) error {
+func (db *DB) MysqlFullBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string, backupDir string) error {
 	log.Print("mysql full backup function started..!")
 
-	backupDir := getBackupDir()
 	binlogMetadataFile := fmt.Sprintf("%s/binlog_position.txt", backupDir)
 
 	if allDBFull {
@@ -25,7 +24,7 @@ func (db *DB) MysqlFullBackup(dbConn *sql.DB, allDBFull bool, database string, d
 		if err := uploadBackupToS3(backupFile, backupFileName); err != nil {
 			return fmt.Errorf("failed to upload backup to S3: %w", err)
 		}
-		log.Print("Backup all databases completed..!")
+		log.Print("backup all databases completed..!")
 	} else {
 		if databases != nil {
 			for _, database := range databases {
@@ -47,14 +46,6 @@ func (db *DB) MysqlFullBackup(dbConn *sql.DB, allDBFull bool, database string, d
 	}
 	log.Print("mysql full backup function finished..!")
 	return nil
-}
-
-func getBackupDir() string {
-	backupDir := os.Getenv("MYSQL_BACKUP_PATH")
-	if backupDir == "" {
-		backupDir = "/tmp"
-	}
-	return backupDir
 }
 
 func backupAllDatabases(db *DB, backupFile string) error {
@@ -116,13 +107,13 @@ func saveCurrentBinlogPosition(db *sql.DB, metadataFile string) {
 	row := db.QueryRow(query)
 	err := row.Scan(&binlogFile, &binlogPos, &dummy1, &dummy2, &dummy3)
 	if err != nil {
-		log.Printf("Error fetching binlog position: %v", err)
+		log.Printf("error fetching binlog position: %v", err)
 		return
 	}
 
 	file, err := os.Create(metadataFile)
 	if err != nil {
-		log.Printf("Error creating metadata file: %v", err)
+		log.Printf("error creating metadata file: %v", err)
 		return
 	}
 	defer file.Close()
@@ -133,7 +124,7 @@ func saveCurrentBinlogPosition(db *sql.DB, metadataFile string) {
 		return
 	}
 
-	log.Printf("Saved binlog position: %s at %d", binlogFile, binlogPos)
+	log.Printf("saved binlog position: %s at %d", binlogFile, binlogPos)
 }
 
 func backupError(err error, database string, output []byte) {

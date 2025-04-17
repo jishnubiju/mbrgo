@@ -76,7 +76,7 @@ func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			return fmt.Errorf("database restore failed: %w", err)
 		}
 	case "incremental-backup":
-		if err := mysqlDB.MysqlIncrementalBackup(context.Background()); err != nil {
+		if err := incrementalBackupCli(cliArgs, mysqlDB); err != nil {
 			return fmt.Errorf("incremental backup failed: %w", err)
 		}
 	case "enable-all-backup-scheduler":
@@ -96,7 +96,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 
 	var backupLocalDir string
 	for _, arg := range cliArgs[1:] {
-		if strings.HasPrefix(arg, "backup-s3-dir=") {
+		if strings.HasPrefix(arg, "backup-local-dir=") {
 			parts := strings.SplitN(arg, "=", 2)
 			if len(parts) == 2 {
 				backupLocalDir = parts[1]
@@ -105,14 +105,14 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	}
 
 	if backupLocalDir == "" {
-		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-s3-dir=your/path)")
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
 	}
 
 	arg := cliArgs[1]
 	switch {
 	case arg == "all-database-full-backup":
 		// All databases full backup
-		if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
+		if err := mysqlDB.MysqlBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
 			return fmt.Errorf("all database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "database="):
@@ -122,7 +122,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			return fmt.Errorf("invalid argument for single database backup. Usage: database=db_name")
 		}
 		database := parts[1]
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil, backupLocalDir); err != nil {
+		if err := mysqlDB.MysqlBackup(dbConn, false, database, nil, backupLocalDir); err != nil {
 			return fmt.Errorf("database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "databases="):
@@ -137,7 +137,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			cleanedDatabase := strings.Trim(database, " ")
 			cleanedDbList = append(cleanedDbList, cleanedDatabase)
 		}
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, "", cleanedDbList, backupLocalDir); err != nil {
+		if err := mysqlDB.MysqlBackup(dbConn, false, "", cleanedDbList, backupLocalDir); err != nil {
 			return fmt.Errorf("multiple databases full backup failed: %w", err)
 		}
 	default:
@@ -195,7 +195,7 @@ func restoreCli(cliArgs []string, mysqlDB *DB) error {
 }
 
 func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
-	var weekday, hourStr string
+	var weekday, hourStr, backupLocalDir string
 	for _, arg := range cliArgs[1:] {
 		if strings.HasPrefix(arg, "weekday=") {
 			parts := strings.SplitN(arg, "=", 2)
@@ -207,14 +207,41 @@ func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			if len(parts) == 2 {
 				hourStr = parts[1]
 			}
+		} else if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
 		}
 	}
-	if weekday == "" || hourStr == "" {
-		log.Fatal("for enable-all-backup-scheduler, both weekday and hour must be provided (e.g., weekday=Mon hour=00:00)")
+
+	if weekday == "" || hourStr == "" || backupLocalDir == "" {
+		return fmt.Errorf("for enable-all-backup-scheduler, both weekday, hour and backup-local-dir must be provided (e.g., weekday=Mon hour=00:00 backup-local-dir=your/path)")
 	}
 	log.Printf("enabling backup scheduler every %s at %s", weekday, hourStr)
-	if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr); err != nil {
-		log.Fatalf("failed to enable backup scheduler: %v", err)
+	if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr, backupLocalDir); err != nil {
+		return fmt.Errorf("failed to enable backup scheduler: %v", err)
 	}
 	select {}
+}
+
+func incrementalBackupCli(cliArgs []string, mysqlDB *DB) error {
+	var backupLocalDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
+		}
+	}
+
+	if backupLocalDir == "" {
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
+	}
+
+	if err := mysqlDB.MysqlIncrementalBackup(context.Background(), backupLocalDir); err != nil {
+		return fmt.Errorf("incremental backup failed: %w", err)
+	}
+	return nil
 }

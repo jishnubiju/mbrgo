@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func (db *DB) EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour string) error {
+func (db *DB) EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour string, backupLocalDir string) error {
 	weekdayTime, err := parseWeekday(weekday)
 	if err != nil {
 		return fmt.Errorf("invalid weekday: %v", err)
@@ -24,11 +24,11 @@ func (db *DB) EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour stri
 
 	var incCancel context.CancelFunc
 
-	go scheduleBackup(db, rootCtx, dbConn, weekdayTime, hourTime, &incCancel)
+	go scheduleBackup(db, rootCtx, dbConn, weekdayTime, hourTime, &incCancel, backupLocalDir)
 	select {}
 }
 
-func scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday time.Weekday, hour time.Time, incCancel *context.CancelFunc) {
+func scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday time.Weekday, hour time.Time, incCancel *context.CancelFunc, backupLocalDir string) {
 	now := time.Now()
 	nextBackup := time.Date(now.Year(), now.Month(), now.Day(), hour.Hour(), hour.Minute(), 0, 0, now.Location())
 	if now.After(nextBackup) || now.Weekday() != weekday {
@@ -37,35 +37,35 @@ func scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday tim
 			daysToAdd = 7
 		}
 		nextBackup = nextBackup.AddDate(0, 0, daysToAdd)
-		log.Printf("First backup scheduled at %s", nextBackup.Format(time.RFC1123))
+		log.Printf("first backup scheduled at %s", nextBackup.Format(time.RFC1123))
 	}
 	duration := time.Until(nextBackup)
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
-		log.Println("Timer expired, scheduling backup...")
-		backup(db, rootCtx, dbConn, incCancel)
+		log.Println("timer expired, scheduling backup...")
+		backup(db, rootCtx, dbConn, incCancel, backupLocalDir)
 		ticker := time.NewTicker(7 * 24 * time.Hour)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				backup(db, rootCtx, dbConn, incCancel)
+				backup(db, rootCtx, dbConn, incCancel, backupLocalDir)
 			case <-rootCtx.Done():
-				log.Println("Root context cancelled, stopping backup scheduler")
+				log.Println("root context cancelled, stopping backup scheduler")
 				return
 			}
 		}
 	case <-rootCtx.Done():
-		log.Println("Root context cancelled, stopping backup scheduler")
+		log.Println("root context cancelled, stopping backup scheduler")
 		timer.Stop()
 	}
 }
 
-func backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.CancelFunc) {
-	log.Printf("Backup taken at %s", time.Now().Format(time.RFC1123))
-	if err := db.MysqlFullBackup(dbConn, true, "", nil); err != nil {
+func backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.CancelFunc, backupLocalDir string) {
+	log.Printf("backup taken at %s", time.Now().Format(time.RFC1123))
+	if err := db.MysqlBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
 		log.Printf("Error during full backup: %v", err)
 	}
 
@@ -77,7 +77,7 @@ func backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.
 
 	go func(ctx context.Context) {
 		log.Printf("Incremental backup taken at %s", time.Now().Format(time.RFC1123))
-		if err := db.MysqlIncrementalBackup(ctx); err != nil {
+		if err := db.MysqlIncrementalBackup(ctx, backupLocalDir); err != nil {
 			log.Printf("Error during incremental backup at %s: %v", time.Now().Format(time.RFC1123), err)
 		}
 	}(incCtx)

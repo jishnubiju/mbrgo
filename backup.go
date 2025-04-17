@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func (db *DB) MysqlFullBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string, backupDir string) error {
+func (db *DB) MysqlBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string, backupDir string) error {
 	log.Print("mysql full backup function started..!")
 
 	binlogMetadataFile := fmt.Sprintf("%s/binlog_position.txt", backupDir)

@@ -30,7 +30,7 @@ The service relies on the following environment variables:
 
 ### Full Backup
 
-The `MysqlFullBackup` function performs a full backup of the specified databases or all databases if `MYSQL_BACKUP_ALL_DB` is set to true. The backup files are stored locally and uploaded to AWS S3.
+The `MysqlBackup` function performs a full backup of the specified databases or all databases if `MYSQL_BACKUP_ALL_DB` is set to true. The backup files are stored locally and uploaded to AWS S3.
 
 ### Incremental Backup
 
@@ -95,7 +95,7 @@ The service can be started with the following CLI arguments:
 
 ### `full_backup.go`
 
-- `MysqlFullBackup(dbConn *sql.DB)`: Performs a full backup of the specified databases or all databases.
+- `MysqlBackup(dbConn *sql.DB)`: Performs a full backup of the specified databases or all databases.
 - `getBackupDir()`: Gets the backup directory from environment variables.
 - `backupAllDatabases(db *DB, backupFile string)`: Backs up all databases.
 - `singleDbBackup(db *DB, database string, backupFile string, dbConn *sql.DB, backupFileName string)`: Backs up a single database.

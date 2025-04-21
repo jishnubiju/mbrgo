@@ -30,7 +30,7 @@ The service relies on the following environment variables:
 
 ### Full Backup
 
-The `MysqlBackup` function performs a full backup of the specified databases or all databases if `MYSQL_BACKUP_ALL_DB` is set to true. The backup files are stored locally and uploaded to AWS S3.
+The `MysqlBackup` function performs a full backup of the specified databases or all databases if `AllDatabases` is set to true. The backup files are stored locally and uploaded to AWS S3.
 
 ### Incremental Backup
 
@@ -50,30 +50,30 @@ The service can be started with the following CLI arguments:
 
 ### Backup
 
-- **All Databases Full Backup**: `backup all-database-full-backup`
-- **Single Database Full Backup**: `backup database=<db_name>`
-- **Multiple Databases Full Backup**: `backup databases=<db1,db2,db3>`
+- **All Databases Full Backup**: `backup all-database-full-backup backup-local-dir=<your/path>`
+- **Single Database Full Backup**: `backup database=<db_name> backup-local-dir=<your/path>`
+- **Multiple Databases Full Backup**: `backup databases=<db1,db2,db3> backup-local-dir=<your/path>`
 
 ### Restore
 
-- **All Databases Full Restore**: `restore all-database-full-restore backupS3Dir=<your/s3/path> restoreDir=<your/restore/path>`
-- **Single Database Full Restore**: `restore database=<db_name> backupS3Dir=<your/s3/path> restoreDir=<your/restore/path>`
-- **Multiple Databases Full Restore**: `restore databases=<db1,db2,db3> backupS3Dir=<your/s3/path> restoreDir=<your/restore/path>`
+- **All Databases Full Restore**: `restore all-database-full-restore backup-s3-dir=<your/s3/path> restore-dir=<your/restore/path>`
+- **Single Database Full Restore**: `restore database=<db_name> backup-s3-dir=<your/s3/path> restore-dir=<your/restore/path>`
+- **Multiple Databases Full Restore**: `restore databases=<db1,db2,db3> backup-s3-dir=<your/s3/path> restore-dir=<your/restore/path>`
 
 ### Incremental Backup
 
-- **Incremental Backup**: `incremental-backup`
+- **Incremental Backup**: `incremental-backup backup-local-dir=<your/path>`
 
 ### Schedule Backup
 
-- **Enable All Backup Scheduler**: `enable-all-backup-scheduler weekday=<weekday> hour=<hour>`
+- **Enable All Backup Scheduler**: `enable-all-backup-scheduler weekday=<weekday> hour=<hour> backup-local-dir=<your/path>`
 
 ## Functions
 
 ### `main.go`
 
-- `main()`: Entry point of the service. Initializes the database connection and performs full and incremental backups.
-- `initializeDB()`: Initializes the database configuration from environment variables.
+- `main()`: Entry point of the service. Initializes the database connection and handles CLI arguments.
+- `initDb()`: Initializes the database configuration from environment variables.
 - `CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB)`: Handles command-line arguments for backup and restore operations.
 
 ### `model.go`
@@ -93,10 +93,9 @@ The service can be started with the following CLI arguments:
 - `s3Download(backupS3Dir string, restorePath string)`: Downloads backups from AWS S3.
 - `downloadFile(ctx context.Context, downloader *manager.Downloader, bucket, key, destFile string)`: Downloads a file from AWS S3.
 
-### `full_backup.go`
+### `backup.go`
 
-- `MysqlBackup(dbConn *sql.DB)`: Performs a full backup of the specified databases or all databases.
-- `getBackupDir()`: Gets the backup directory from environment variables.
+- `MysqlBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string, backupDir string)`: Performs a full backup of the specified databases or all databases.
 - `backupAllDatabases(db *DB, backupFile string)`: Backs up all databases.
 - `singleDbBackup(db *DB, database string, backupFile string, dbConn *sql.DB, backupFileName string)`: Backs up a single database.
 - `uploadBackupToS3(backupFile, backupFileName string)`: Uploads the backup file to AWS S3.
@@ -106,9 +105,9 @@ The service can be started with the following CLI arguments:
 
 ### `incremental_backup.go`
 
-- `MysqlIncrementalBackup()`: Performs an incremental backup using MySQL binlog.
+- `MysqlIncrementalBackup(ctx context.Context, backupDir string)`: Performs an incremental backup using MySQL binlog.
 - `openNewFile(dirPath string)`: Opens a new file for storing binlog events.
-- `streamData(streamer *replication.BinlogStreamer, dirPath string)`: Streams binlog events to a file.
+- `streamData(ctx context.Context, streamer *replication.BinlogStreamer, dirPath string)`: Streams binlog events to a file.
 - `processEvent(ev *replication.BinlogEvent, currentFile *os.File, dirPath string)`: Processes a binlog event.
 - `writeBufferToFile(currentFile *os.File)`: Writes the buffer to the current file.
 - `rotateFile(file *os.File, dirPath string)`: Rotates the current file.
@@ -116,19 +115,17 @@ The service can be started with the following CLI arguments:
 
 ### `restore.go`
 
-- `MysqlRestore(backupS3Dir string, restoreDir string)`: Restores databases from full and incremental backups.
-- `getRestorePath()`: Gets the restore path from environment variables.
+- `MysqlRestore(backupS3Dir string, restoreDir string, allDBFull bool, database string, databases []string)`: Restores databases from full and incremental backups.
 - `findFullBackupFile(restorePath, database string)`: Finds the full backup file for a database.
 - `restoreFullBackup(db *DB, backupFile string, targetDatabase string)`: Restores a full backup.
-- `restoreError(err error, database string, output []byte)`: Handles restore errors.
-- `restoreIncrementalBackup(db *DB)`: Restores incremental backups.
+- `restoreIncrementalBackup(db *DB, restorePath string)`: Restores incremental backups.
 - `restoreFromRawBinlog(db *DB, backupFile string)`: Restores from raw binlog.
 
 ### `schedule.go`
 
-- `EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour string)`: Schedules full and incremental backups at a specified time every week.
-- `scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday time.Weekday, hour time.Time, incCancel *context.CancelFunc)`: Schedules the backup.
-- `backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.CancelFunc)`: Performs the full and incremental backups.
+- `EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour string, backupLocalDir string)`: Schedules full and incremental backups at a specified time every week.
+- `scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday time.Weekday, hour time.Time, incCancel *context.CancelFunc, backupLocalDir string)`: Schedules the backup.
+- `backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.CancelFunc, backupLocalDir string)`: Performs the full and incremental backups.
 - `parseWeekday(weekday string) (time.Weekday, error)`: Parses the weekday string to a `time.Weekday`.
 
 ## License

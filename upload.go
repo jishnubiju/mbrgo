@@ -18,6 +18,14 @@ import (
 )
 
 // StreamBinlogToS3 streams binary log data to an S3 bucket.
+// It writes the provided binary log data to an S3 object using an io.Pipe for streaming.
+//
+// Parameters:
+// - data: The binary log data to be streamed.
+// - fileName: The name of the file to be used for generating the S3 key.
+//
+// Returns:
+// - error: An error if the streaming or upload fails, otherwise nil.
 func StreamBinlogToS3(data []byte, fileName string) error {
 	log.Print("streaming binlog to S3 function started...")
 
@@ -65,6 +73,14 @@ func StreamBinlogToS3(data []byte, fileName string) error {
 }
 
 // UploadBufferToS3 uploads a byte slice to an S3 bucket.
+// It uploads the provided data as an S3 object using a buffer.
+//
+// Parameters:
+// - data: The byte slice containing the data to be uploaded.
+// - fileName: The name of the file to be used for generating the S3 key.
+//
+// Returns:
+// - error: An error if the upload fails, otherwise nil.
 func UploadBufferToS3(data []byte, fileName string) error {
 	log.Print("upload buffer to S3 function started...")
 
@@ -105,6 +121,14 @@ func UploadBufferToS3(data []byte, fileName string) error {
 }
 
 // getS3Key generates the S3 key for a given file name.
+// It determines the S3 key based on the type of backup (full or incremental).
+//
+// Parameters:
+// - fileName: The name of the file for which the S3 key is to be generated.
+//
+// Returns:
+// - string: The generated S3 key.
+// - error: An error if the file name is invalid or the date parsing fails.
 func getS3Key(fileName string) (string, error) {
 	if strings.Contains(fileName, "full_backup") {
 		tokens := strings.SplitN(fileName, "_", 2)
@@ -139,6 +163,14 @@ func getS3Key(fileName string) (string, error) {
 }
 
 // getStreamS3Key generates the S3 key for streaming data.
+// It determines the S3 key based on the type of backup (incremental).
+//
+// Parameters:
+// - fileName: The name of the file for which the S3 key is to be generated.
+//
+// Returns:
+// - string: The generated S3 key.
+// - error: An error if the file name is invalid or the date parsing fails.
 func getStreamS3Key(fileName string) (string, error) {
 	if strings.Contains(fileName, "incr_backup") {
 		tokens := strings.Split(fileName, "_")

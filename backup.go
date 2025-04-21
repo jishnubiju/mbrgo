@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// MysqlBackup performs a MySQL backup operation.
+// It supports both full backups of all databases and backups of specific databases.
+//
+// Parameters:
+// - dbConn: The database connection object.
+// - allDBFull: A boolean indicating whether to back up all databases.
+// - database: The name of a single database to back up (if specified).
+// - databases: A list of database names to back up (if specified).
+// - backupDir: The directory where the backup files will be stored.
+//
+// Returns:
+// - error: An error if the backup or upload process fails, otherwise nil.
 func (db *DB) MysqlBackup(dbConn *sql.DB, allDBFull bool, database string, databases []string, backupDir string) error {
 	log.Print("mysql full backup function started..!")
 
@@ -48,6 +60,14 @@ func (db *DB) MysqlBackup(dbConn *sql.DB, allDBFull bool, database string, datab
 	return nil
 }
 
+// backupAllDatabases performs a full backup of all databases.
+//
+// Parameters:
+// - db: The database configuration object.
+// - backupFile: The path to the file where the backup will be stored.
+//
+// Returns:
+// - error: An error if the backup process fails, otherwise nil.
 func backupAllDatabases(db *DB, backupFile string) error {
 	commandStr := fmt.Sprintf("mysqldump --host %s --port %d --user %s --password=%s --all-databases --flush-logs --single-transaction > %s", db.Host, db.Port, db.User, db.Password, backupFile)
 	command := exec.Command("sh", "-c", commandStr)
@@ -60,6 +80,17 @@ func backupAllDatabases(db *DB, backupFile string) error {
 	return nil
 }
 
+// singleDbBackup performs a backup of a single database.
+//
+// Parameters:
+// - db: The database configuration object.
+// - database: The name of the database to back up.
+// - backupFile: The path to the file where the backup will be stored.
+// - dbConn: The database connection object.
+// - backupFileName: The name of the backup file.
+//
+// Returns:
+// - error: An error if the backup or upload process fails, otherwise nil.
 func singleDbBackup(db *DB, database string, backupFile string, dbConn *sql.DB, backupFileName string) error {
 	ok, err := databaseExists(dbConn, database)
 	if !ok {
@@ -82,6 +113,14 @@ func singleDbBackup(db *DB, database string, backupFile string, dbConn *sql.DB, 
 	return nil
 }
 
+// uploadBackupToS3 uploads a backup file to an S3 bucket.
+//
+// Parameters:
+// - backupFile: The path to the backup file.
+// - backupFileName: The name of the backup file to be used as the S3 key.
+//
+// Returns:
+// - error: An error if the upload process fails, otherwise nil.
 func uploadBackupToS3(backupFile, backupFileName string) error {
 	data, err := os.ReadFile(backupFile)
 	if err != nil {
@@ -91,6 +130,15 @@ func uploadBackupToS3(backupFile, backupFileName string) error {
 	return nil
 }
 
+// databaseExists checks if a database exists in the MySQL server.
+//
+// Parameters:
+// - db: The database connection object.
+// - dbName: The name of the database to check.
+//
+// Returns:
+// - bool: True if the database exists, otherwise false.
+// - error: An error if the query fails.
 func databaseExists(db *sql.DB, dbName string) (bool, error) {
 	var exists bool
 	query := "SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?)"
@@ -98,6 +146,11 @@ func databaseExists(db *sql.DB, dbName string) (bool, error) {
 	return exists, err
 }
 
+// saveCurrentBinlogPosition saves the current binary log position to a metadata file.
+//
+// Parameters:
+// - db: The database connection object.
+// - metadataFile: The path to the metadata file where the binlog position will be saved.
 func saveCurrentBinlogPosition(db *sql.DB, metadataFile string) {
 	var binlogFile string
 	var binlogPos uint32
@@ -127,6 +180,12 @@ func saveCurrentBinlogPosition(db *sql.DB, metadataFile string) {
 	log.Printf("saved binlog position: %s at %d", binlogFile, binlogPos)
 }
 
+// backupError logs detailed information about a backup error.
+//
+// Parameters:
+// - err: The error object.
+// - database: The name of the database being backed up.
+// - output: The output from the backup command.
 func backupError(err error, database string, output []byte) {
 	if exitError, ok := err.(*exec.ExitError); ok {
 		exitCode := exitError.ExitCode()

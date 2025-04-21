@@ -13,18 +13,26 @@ import (
 )
 
 const (
-	bufferSize  = 2 * 1024 * 1024
-	maxFileSize = 10 * 1024 * 1024
+	bufferSize  = 2 * 1024 * 1024  // Size of the buffer for binlog events.
+	maxFileSize = 10 * 1024 * 1024 // Maximum size of a single backup file.
 )
 
 var (
-	buffer        = make([]byte, 0, bufferSize)
-	currentSize   int64
-	fileIndex     = 0
-	currentFile   *os.File
-	currentBinlog = "binlog.000001"
+	buffer        = make([]byte, 0, bufferSize) // Buffer to store binlog events.
+	currentSize   int64                         // Current size of the backup file.
+	fileIndex     = 0                           // Index for naming backup files.
+	currentFile   *os.File                      // Current backup file being written to.
+	currentBinlog = "binlog.000001"             // Current binlog file being processed.
 )
 
+// openNewFile creates a new backup file in the specified directory.
+//
+// Parameters:
+// - dirPath: The directory where the new backup file will be created.
+//
+// Returns:
+// - *os.File: The newly created file.
+// - error: An error if the file creation fails.
 func openNewFile(dirPath string) (*os.File, error) {
 	filename := fmt.Sprintf("%s/incr_backup_%s_%d_%s.log", dirPath, currentBinlog, fileIndex, time.Now().Format("20060102_150405"))
 	fileIndex++
@@ -32,6 +40,12 @@ func openNewFile(dirPath string) (*os.File, error) {
 	return os.Create(filename)
 }
 
+// streamData streams binlog events from the MySQL server and writes them to backup files.
+//
+// Parameters:
+// - ctx: The context for managing cancellations.
+// - streamer: The binlog streamer instance.
+// - dirPath: The directory where backup files will be stored.
 func streamData(ctx context.Context, streamer *replication.BinlogStreamer, dirPath string) {
 	log.Print("streaming data started...")
 	var err error
@@ -58,6 +72,12 @@ func streamData(ctx context.Context, streamer *replication.BinlogStreamer, dirPa
 	}
 }
 
+// processEvent processes a single binlog event and writes it to the backup file.
+//
+// Parameters:
+// - ev: The binlog event to process.
+// - currentFile: The current backup file being written to.
+// - dirPath: The directory where backup files are stored.
 func processEvent(ev *replication.BinlogEvent, currentFile *os.File, dirPath string) {
 	if rotateEv, ok := ev.Event.(*replication.RotateEvent); ok {
 		log.Printf("received RotateEvent: switching to new binlog file: %s", string(rotateEv.NextLogName))
@@ -84,6 +104,10 @@ func processEvent(ev *replication.BinlogEvent, currentFile *os.File, dirPath str
 	log.Printf("processed event: %T at pos %d", ev.Event, ev.Header.LogPos)
 }
 
+// writeBufferToFile writes the buffered binlog data to the current backup file.
+//
+// Parameters:
+// - currentFile: The current backup file being written to.
 func writeBufferToFile(currentFile *os.File) {
 	n, err := currentFile.Write(buffer)
 	if err != nil {
@@ -94,6 +118,11 @@ func writeBufferToFile(currentFile *os.File) {
 	buffer = buffer[:0]
 }
 
+// rotateFile closes the current backup file and creates a new one.
+//
+// Parameters:
+// - file: The current backup file to be rotated.
+// - dirPath: The directory where the new backup file will be created.
 func rotateFile(file *os.File, dirPath string) {
 	if len(buffer) > 0 {
 		if _, err := file.Write(buffer); err != nil {
@@ -111,7 +140,6 @@ func rotateFile(file *os.File, dirPath string) {
 			return
 		}
 		logFile := filepath.Base(fileName)
-		log.Println(file)
 		UploadBufferToS3(data, logFile)
 	}(rotatedFileName)
 
@@ -123,6 +151,13 @@ func rotateFile(file *os.File, dirPath string) {
 	currentSize = 0
 }
 
+// getLastBinlogPosition retrieves the last binlog position from the metadata file.
+//
+// Parameters:
+// - metadataFile: The path to the metadata file.
+//
+// Returns:
+// - mysql.Position: The last binlog position.
 func getLastBinlogPosition(metadataFile string) mysql.Position {
 	file, err := os.Open(metadataFile)
 	if err != nil {
@@ -142,6 +177,14 @@ func getLastBinlogPosition(metadataFile string) mysql.Position {
 	return mysql.Position{Name: binlogFile, Pos: binlogPos}
 }
 
+// MysqlIncrementalBackup starts an incremental backup by streaming binlog events.
+//
+// Parameters:
+// - ctx: The context for managing cancellations.
+// - backupDir: The directory where backup files will be stored.
+//
+// Returns:
+// - error: An error if the incremental backup process fails, otherwise nil.
 func (db *DB) MysqlIncrementalBackup(ctx context.Context, backupDir string) error {
 	log.Print("MySQL incremental backup started...")
 	cfg := replication.BinlogSyncerConfig{

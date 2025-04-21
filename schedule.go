@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// EnableAllBackupScheduler enables a backup scheduler for MySQL databases.
+// It schedules full and incremental backups to run at a specified weekday and time.
+//
+// Parameters:
+// - dbConn: The database connection object.
+// - weekday: The day of the week when the backup should run (e.g., "Monday").
+// - hour: The time of day when the backup should run (in "HH:MM" format).
+// - backupLocalDir: The local directory where backups will be stored.
+//
+// Returns:
+// - error: An error if the scheduler setup fails, otherwise nil.
 func (db *DB) EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour string, backupLocalDir string) error {
 	weekdayTime, err := parseWeekday(weekday)
 	if err != nil {
@@ -28,6 +39,16 @@ func (db *DB) EnableAllBackupScheduler(dbConn *sql.DB, weekday string, hour stri
 	select {}
 }
 
+// scheduleBackup schedules full and incremental backups to run periodically.
+//
+// Parameters:
+// - db: The database configuration object.
+// - rootCtx: The root context for managing cancellations.
+// - dbConn: The database connection object.
+// - weekday: The day of the week when the backup should run.
+// - hour: The time of day when the backup should run.
+// - incCancel: A pointer to a context cancel function for incremental backups.
+// - backupLocalDir: The local directory where backups will be stored.
 func scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday time.Weekday, hour time.Time, incCancel *context.CancelFunc, backupLocalDir string) {
 	now := time.Now()
 	nextBackup := time.Date(now.Year(), now.Month(), now.Day(), hour.Hour(), hour.Minute(), 0, 0, now.Location())
@@ -63,6 +84,14 @@ func scheduleBackup(db *DB, rootCtx context.Context, dbConn *sql.DB, weekday tim
 	}
 }
 
+// backup performs a full backup and schedules an incremental backup.
+//
+// Parameters:
+// - db: The database configuration object.
+// - rootCtx: The root context for managing cancellations.
+// - dbConn: The database connection object.
+// - incCancel: A pointer to a context cancel function for incremental backups.
+// - backupLocalDir: The local directory where backups will be stored.
 func backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.CancelFunc, backupLocalDir string) {
 	log.Printf("backup taken at %s", time.Now().Format(time.RFC1123))
 	if err := db.MysqlBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
@@ -84,6 +113,14 @@ func backup(db *DB, rootCtx context.Context, dbConn *sql.DB, incCancel *context.
 
 }
 
+// parseWeekday parses a string representation of a weekday into a time.Weekday value.
+//
+// Parameters:
+// - weekday: The string representation of the weekday (e.g., "Monday").
+//
+// Returns:
+// - time.Weekday: The parsed weekday value.
+// - error: An error if the weekday string is invalid.
 func parseWeekday(weekday string) (time.Weekday, error) {
 	weekdays := map[string]time.Weekday{
 		"sunday":    time.Sunday,
@@ -102,6 +139,13 @@ func parseWeekday(weekday string) (time.Weekday, error) {
 	return time.Sunday, fmt.Errorf("invalid weekday: %s", weekday)
 }
 
+// stringToLower normalizes a string representation of a weekday to lowercase.
+//
+// Parameters:
+// - s: The string representation of the weekday.
+//
+// Returns:
+// - string: The normalized lowercase representation of the weekday.
 func stringToLower(s string) string {
 	return map[string]string{
 		"Sun": "sunday", "sun": "sunday", "Sunday": "sunday", "sunday": "sunday",

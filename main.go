@@ -13,22 +13,28 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// main is the entry point of the application.
+// It initializes the database configuration, validates it, and handles CLI arguments.
 func main() {
 	log.Print("service started...")
 
+	// Load environment variables from the .env file.
 	if err := godotenv.Load(); err != nil {
 		log.Fatal("error loading .env file: ", err)
 	}
 
+	// Initialize the database configuration.
 	mysqlDB, err := initDb()
 	if err != nil {
 		log.Fatal("failed to initialize DB: ", err)
 	}
 
+	// Validate the database configuration.
 	if err := mysqlDB.Validate(); err != nil {
 		log.Fatal("invalid DB configuration: ", err)
 	}
 
+	// Create a connection to the MySQL database.
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/information_schema", mysqlDB.User, mysqlDB.Password, mysqlDB.Host, mysqlDB.Port)
 	dbConn, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -36,12 +42,18 @@ func main() {
 	}
 	defer dbConn.Close()
 
+	// Handle CLI arguments.
 	cliArgs := os.Args[1:]
 	if err := CliArgHandler(cliArgs, mysqlDB, dbConn); err != nil {
 		log.Fatalf("error handling cli arguments: %v", err)
 	}
 }
 
+// initDb initializes the database configuration by reading environment variables.
+//
+// Returns:
+// - *DB: The initialized database configuration.
+// - error: An error if any required environment variable is missing or invalid.
 func initDb() (*DB, error) {
 	mysqlDB := &DB{
 		Host:     os.Getenv("MYSQL_HOST"),
@@ -61,6 +73,15 @@ func initDb() (*DB, error) {
 	return mysqlDB, nil
 }
 
+// CliArgHandler processes the CLI arguments and executes the corresponding commands.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the CLI arguments are invalid or the command execution fails.
 func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	if len(cliArgs) < 1 {
 		return fmt.Errorf("invalid argument, one of backup or restore must be provided")
@@ -89,6 +110,15 @@ func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	return nil
 }
 
+// backupCli handles the "backup" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the backup process fails.
 func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	if len(cliArgs) < 2 {
 		return fmt.Errorf("for backup, one of the all-database-full-backup, database=db_name, or databases=db1,db2,db3 must be provided")
@@ -146,6 +176,14 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	return nil
 }
 
+// restoreCli handles the "restore" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+//
+// Returns:
+// - error: An error if the restore process fails.
 func restoreCli(cliArgs []string, mysqlDB *DB) error {
 	var backupS3Dir, restoreDir string
 	for _, arg := range cliArgs[1:] {
@@ -194,6 +232,44 @@ func restoreCli(cliArgs []string, mysqlDB *DB) error {
 	return nil
 }
 
+// incrementalBackupCli handles the "incremental-backup" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+//
+// Returns:
+// - error: An error if the incremental backup process fails.
+func incrementalBackupCli(cliArgs []string, mysqlDB *DB) error {
+	var backupLocalDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
+		}
+	}
+
+	if backupLocalDir == "" {
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
+	}
+
+	if err := mysqlDB.MysqlIncrementalBackup(context.Background(), backupLocalDir); err != nil {
+		return fmt.Errorf("incremental backup failed: %w", err)
+	}
+	return nil
+}
+
+// allBacupCli handles the "enable-all-backup-scheduler" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the scheduler setup fails.
 func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	var weekday, hourStr, backupLocalDir string
 	for _, arg := range cliArgs[1:] {
@@ -223,25 +299,4 @@ func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 		return fmt.Errorf("failed to enable backup scheduler: %v", err)
 	}
 	select {}
-}
-
-func incrementalBackupCli(cliArgs []string, mysqlDB *DB) error {
-	var backupLocalDir string
-	for _, arg := range cliArgs[1:] {
-		if strings.HasPrefix(arg, "backup-local-dir=") {
-			parts := strings.SplitN(arg, "=", 2)
-			if len(parts) == 2 {
-				backupLocalDir = parts[1]
-			}
-		}
-	}
-
-	if backupLocalDir == "" {
-		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
-	}
-
-	if err := mysqlDB.MysqlIncrementalBackup(context.Background(), backupLocalDir); err != nil {
-		return fmt.Errorf("incremental backup failed: %w", err)
-	}
-	return nil
 }

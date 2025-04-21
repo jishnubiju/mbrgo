@@ -13,40 +13,52 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// main is the entry point of the application.
+// It initializes the database configuration, validates it, and handles CLI arguments.
 func main() {
 	log.Print("service started...")
 
+	// Load environment variables from the .env file.
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env file: ", err)
+		log.Fatal("error loading .env file: ", err)
 	}
 
-	mysqlDB, err := initializeDB()
+	// Initialize the database configuration.
+	mysqlDB, err := initDb()
 	if err != nil {
-		log.Fatal("Failed to initialize DB: ", err)
+		log.Fatal("failed to initialize DB: ", err)
 	}
 
+	// Validate the database configuration.
 	if err := mysqlDB.Validate(); err != nil {
-		log.Fatal("Invalid DB configuration: ", err)
+		log.Fatal("invalid DB configuration: ", err)
 	}
 
+	// Create a connection to the MySQL database.
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/information_schema", mysqlDB.User, mysqlDB.Password, mysqlDB.Host, mysqlDB.Port)
 	dbConn, err := sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to MySQL: %v", err)
+		log.Fatalf("failed to connect to MySQL: %v", err)
 	}
 	defer dbConn.Close()
 
+	// Handle CLI arguments.
 	cliArgs := os.Args[1:]
 	if err := CliArgHandler(cliArgs, mysqlDB, dbConn); err != nil {
-		log.Fatalf("Error handling CLI arguments: %v", err)
+		log.Fatalf("error handling cli arguments: %v", err)
 	}
 }
 
-func initializeDB() (*DB, error) {
+// initDb initializes the database configuration by reading environment variables.
+//
+// Returns:
+// - *DB: The initialized database configuration.
+// - error: An error if any required environment variable is missing or invalid.
+func initDb() (*DB, error) {
 	mysqlDB := &DB{
-		Host:     getEnv("MYSQL_HOST"),
-		User:     getEnv("MYSQL_USER"),
-		Password: getEnv("MYSQL_PASSWORD"),
+		Host:     os.Getenv("MYSQL_HOST"),
+		User:     os.Getenv("MYSQL_USER"),
+		Password: os.Getenv("MYSQL_PASSWORD"),
 	}
 
 	portStr := os.Getenv("MYSQL_PORT")
@@ -61,14 +73,15 @@ func initializeDB() (*DB, error) {
 	return mysqlDB, nil
 }
 
-func getEnv(key string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		log.Fatalf("Environment variable %s is not set", key)
-	}
-	return value
-}
-
+// CliArgHandler processes the CLI arguments and executes the corresponding commands.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the CLI arguments are invalid or the command execution fails.
 func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	if len(cliArgs) < 1 {
 		return fmt.Errorf("invalid argument, one of backup or restore must be provided")
@@ -77,14 +90,14 @@ func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	switch cliArgs[0] {
 	case "backup":
 		if err := backupCli(cliArgs, mysqlDB, dbConn); err != nil {
-			return fmt.Errorf("backup failed: %w", err)
+			return fmt.Errorf("database backup failed: %w", err)
 		}
 	case "restore":
 		if err := restoreCli(cliArgs, mysqlDB); err != nil {
-			return fmt.Errorf("restore failed: %w", err)
+			return fmt.Errorf("database restore failed: %w", err)
 		}
 	case "incremental-backup":
-		if err := mysqlDB.MysqlIncrementalBackup(context.Background()); err != nil {
+		if err := incrementalBackupCli(cliArgs, mysqlDB); err != nil {
 			return fmt.Errorf("incremental backup failed: %w", err)
 		}
 	case "enable-all-backup-scheduler":
@@ -97,16 +110,40 @@ func CliArgHandler(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	return nil
 }
 
+// backupCli handles the "backup" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the backup process fails.
 func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	if len(cliArgs) < 2 {
 		return fmt.Errorf("for backup, one of the all-database-full-backup, database=db_name, or databases=db1,db2,db3 must be provided")
 	}
+
+	var backupLocalDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
+		}
+	}
+
+	if backupLocalDir == "" {
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
+	}
+
 	arg := cliArgs[1]
 	switch {
 	case arg == "all-database-full-backup":
 		// All databases full backup
-		if err := mysqlDB.MysqlFullBackup(dbConn, true, "", nil); err != nil {
-			return fmt.Errorf("all-database full backup failed: %w", err)
+		if err := mysqlDB.MysqlBackup(dbConn, true, "", nil, backupLocalDir); err != nil {
+			return fmt.Errorf("all database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "database="):
 		// Single database full backup
@@ -115,7 +152,7 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			return fmt.Errorf("invalid argument for single database backup. Usage: database=db_name")
 		}
 		database := parts[1]
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, database, nil); err != nil {
+		if err := mysqlDB.MysqlBackup(dbConn, false, database, nil, backupLocalDir); err != nil {
 			return fmt.Errorf("database full backup failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "databases="):
@@ -125,7 +162,12 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			return fmt.Errorf("invalid argument for multiple databases backup. Usage: databases=db1,db2,db3")
 		}
 		dbList := strings.Split(parts[1], ",")
-		if err := mysqlDB.MysqlFullBackup(dbConn, false, "", dbList); err != nil {
+		cleanedDbList := []string{}
+		for _, database := range dbList {
+			cleanedDatabase := strings.Trim(database, " ")
+			cleanedDbList = append(cleanedDbList, cleanedDatabase)
+		}
+		if err := mysqlDB.MysqlBackup(dbConn, false, "", cleanedDbList, backupLocalDir); err != nil {
 			return fmt.Errorf("multiple databases full backup failed: %w", err)
 		}
 	default:
@@ -134,6 +176,14 @@ func backupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 	return nil
 }
 
+// restoreCli handles the "restore" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+//
+// Returns:
+// - error: An error if the restore process fails.
 func restoreCli(cliArgs []string, mysqlDB *DB) error {
 	var backupS3Dir, restoreDir string
 	for _, arg := range cliArgs[1:] {
@@ -156,7 +206,7 @@ func restoreCli(cliArgs []string, mysqlDB *DB) error {
 	switch {
 	case arg == "all-database-full-restore":
 		if err := mysqlDB.MysqlRestore(backupS3Dir, restoreDir, true, "", nil); err != nil {
-			return fmt.Errorf("restore failed: %w", err)
+			return fmt.Errorf("all database restore failed: %w", err)
 		}
 	case strings.HasPrefix(arg, "database="):
 		parts := strings.SplitN(arg, "=", 2)
@@ -182,8 +232,46 @@ func restoreCli(cliArgs []string, mysqlDB *DB) error {
 	return nil
 }
 
+// incrementalBackupCli handles the "incremental-backup" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+//
+// Returns:
+// - error: An error if the incremental backup process fails.
+func incrementalBackupCli(cliArgs []string, mysqlDB *DB) error {
+	var backupLocalDir string
+	for _, arg := range cliArgs[1:] {
+		if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
+		}
+	}
+
+	if backupLocalDir == "" {
+		return fmt.Errorf("for backup, backup-local-dir must be provided (e.g., backup-local-dir=your/path)")
+	}
+
+	if err := mysqlDB.MysqlIncrementalBackup(context.Background(), backupLocalDir); err != nil {
+		return fmt.Errorf("incremental backup failed: %w", err)
+	}
+	return nil
+}
+
+// allBacupCli handles the "enable-all-backup-scheduler" CLI command.
+//
+// Parameters:
+// - cliArgs: The list of CLI arguments.
+// - mysqlDB: The database configuration object.
+// - dbConn: The database connection object.
+//
+// Returns:
+// - error: An error if the scheduler setup fails.
 func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
-	var weekday, hourStr string
+	var weekday, hourStr, backupLocalDir string
 	for _, arg := range cliArgs[1:] {
 		if strings.HasPrefix(arg, "weekday=") {
 			parts := strings.SplitN(arg, "=", 2)
@@ -195,14 +283,20 @@ func allBacupCli(cliArgs []string, mysqlDB *DB, dbConn *sql.DB) error {
 			if len(parts) == 2 {
 				hourStr = parts[1]
 			}
+		} else if strings.HasPrefix(arg, "backup-local-dir=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				backupLocalDir = parts[1]
+			}
 		}
 	}
-	if weekday == "" || hourStr == "" {
-		log.Fatal("for enable-all-backup-scheduler, both weekday and hour must be provided (e.g., weekday=Mon hour=00:00)")
+
+	if weekday == "" || hourStr == "" || backupLocalDir == "" {
+		return fmt.Errorf("for enable-all-backup-scheduler, both weekday, hour and backup-local-dir must be provided (e.g., weekday=Mon hour=00:00 backup-local-dir=your/path)")
 	}
-	log.Printf("Enabling backup scheduler every %s at %s", weekday, hourStr)
-	if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr); err != nil {
-		log.Fatalf("Failed to enable backup scheduler: %v", err)
+	log.Printf("enabling backup scheduler every %s at %s", weekday, hourStr)
+	if err := mysqlDB.EnableAllBackupScheduler(dbConn, weekday, hourStr, backupLocalDir); err != nil {
+		return fmt.Errorf("failed to enable backup scheduler: %v", err)
 	}
 	select {}
 }

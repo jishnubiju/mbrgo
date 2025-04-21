@@ -9,22 +9,28 @@ import (
 	"strings"
 )
 
+// MysqlRestore restores MySQL databases from backups stored in an S3 bucket.
+//
+// Parameters:
+// - backupS3Dir: The S3 directory (prefix) containing the backup files.
+// - restoreDir: The local directory where the backups will be downloaded and restored from.
+// - allDBFull: A boolean indicating whether to restore all databases.
+// - database: The name of a single database to restore (if specified).
+// - databases: A list of database names to restore (if specified).
+//
+// Returns:
+// - error: An error if the restore process fails, otherwise nil.
 func (db *DB) MysqlRestore(backupS3Dir string, restoreDir string, allDBFull bool, database string, databases []string) error {
 	log.Print("mysql restore function started..!")
 
-	if err := db.Validate(); err != nil {
-		return fmt.Errorf("invalid DB configuration: %w", err)
-	}
-
-	restorePath := getRestorePath(restoreDir)
-
-	if err := s3Download(backupS3Dir, restorePath); err != nil {
+	// Download backup files from S3 to the local restore directory.
+	if err := s3Download(backupS3Dir, restoreDir); err != nil {
 		return fmt.Errorf("failed to download from S3: %w", err)
 	}
 
 	if allDBFull {
-		log.Print("Restoring all databases..!")
-		backupFile, err := findFullBackupFile(restorePath, "")
+		log.Print("restoring all databases..!")
+		backupFile, err := findFullBackupFile(restoreDir, "")
 		if err != nil {
 			return fmt.Errorf("error finding full backup for all databases: %w", err)
 		}
@@ -39,28 +45,28 @@ func (db *DB) MysqlRestore(backupS3Dir string, restoreDir string, allDBFull bool
 		if databases != nil {
 			for _, database := range databases {
 				log.Printf("Restoring database: %s", database)
-				backupFile, err := findFullBackupFile(restorePath, database)
+				backupFile, err := findFullBackupFile(restoreDir, database)
 				if err != nil {
 					log.Printf("Error finding full backup for database %s: %v", database, err)
 					continue
 				}
 				if err := restoreFullBackup(db, backupFile, database); err != nil {
-					log.Printf("Failed to restore full backup for database %s: %v", database, err)
+					log.Printf("failed to restore full backup for database %s: %v", database, err)
 				}
 			}
 		}
 		if database != "" {
 			log.Printf("Restoring database: %s", database)
-			backupFile, err := findFullBackupFile(restorePath, database)
+			backupFile, err := findFullBackupFile(restoreDir, database)
 			if err != nil {
 				log.Printf("Error finding full backup for database %s: %v", database, err)
 			} else {
 				if err := restoreFullBackup(db, backupFile, database); err != nil {
-					log.Printf("Failed to restore full backup for database %s: %v", database, err)
+					log.Printf("failed to restore full backup for database %s: %v", database, err)
 				}
 			}
 		}
-		if err := restoreIncrementalBackup(db, restorePath); err != nil {
+		if err := restoreIncrementalBackup(db, restoreDir); err != nil {
 			return fmt.Errorf("failed to restore incremental backup: %w", err)
 		}
 	}
@@ -68,13 +74,15 @@ func (db *DB) MysqlRestore(backupS3Dir string, restoreDir string, allDBFull bool
 	return nil
 }
 
-func getRestorePath(restorePath string) string {
-	if restorePath == "" {
-		restorePath = "/tmp"
-	}
-	return restorePath
-}
-
+// findFullBackupFile locates the full backup file for a specific database or all databases.
+//
+// Parameters:
+// - restorePath: The local directory where the backup files are stored.
+// - database: The name of the database to find the backup for (empty for all databases).
+//
+// Returns:
+// - string: The path to the full backup file.
+// - error: An error if the backup file is not found or the directory cannot be read.
 func findFullBackupFile(restorePath, database string) (string, error) {
 	entries, err := os.ReadDir(restorePath)
 	if err != nil {
@@ -97,6 +105,15 @@ func findFullBackupFile(restorePath, database string) (string, error) {
 	return "", fmt.Errorf("backup file not found for pattern: %s", pattern)
 }
 
+// restoreFullBackup restores a full backup for a specific database or all databases.
+//
+// Parameters:
+// - db: The database configuration object.
+// - backupFile: The path to the full backup file.
+// - targetDatabase: The name of the database to restore (empty for all databases).
+//
+// Returns:
+// - error: An error if the restore process fails, otherwise nil.
 func restoreFullBackup(db *DB, backupFile string, targetDatabase string) error {
 	var commandStr string
 	if targetDatabase == "" {
@@ -118,14 +135,20 @@ func restoreFullBackup(db *DB, backupFile string, targetDatabase string) error {
 		return err
 	} else {
 		if targetDatabase == "" {
-			log.Printf("Restore of all databases completed successfully")
+			log.Printf("restore of all databases completed successfully")
 		} else {
-			log.Printf("Restore of database %s completed successfully", targetDatabase)
+			log.Printf("restore of database %s completed successfully", targetDatabase)
 		}
 	}
 	return nil
 }
 
+// restoreError logs detailed information about a restore error.
+//
+// Parameters:
+// - err: The error object.
+// - database: The name of the database being restored.
+// - output: The output from the restore command.
 func restoreError(err error, database string, output []byte) {
 	if exitError, ok := err.(*exec.ExitError); ok {
 		exitCode := exitError.ExitCode()
@@ -139,50 +162,37 @@ func restoreError(err error, database string, output []byte) {
 	}
 }
 
+// restoreIncrementalBackup restores incremental backups from binary logs.
+//
+// Parameters:
+// - db: The database configuration object.
+// - restorePath: The local directory where the incremental backups are stored.
+//
+// Returns:
+// - error: An error if the restore process fails, otherwise nil.
 func restoreIncrementalBackup(db *DB, restorePath string) error {
 	log.Print("mysql restore incremental backup function started..!")
-	backupDir := getRestorePath(restorePath)
 
-	weeklyBinlogPath := filepath.Join(backupDir, "weekly-binlog.log")
+	weeklyBinlogPath := filepath.Join(restorePath, "weekly-binlog.log")
 	if _, err := os.Stat(weeklyBinlogPath); err == nil {
 		log.Printf("Restoring binlog from weekly-binlog.log: %s", weeklyBinlogPath)
 		if err := restoreFromRawBinlog(db, weeklyBinlogPath); err != nil {
 			return fmt.Errorf("failed to restore from weekly binlog: %w", err)
 		}
 	} else {
-		log.Printf("weekly-binlog.log not found in backup directory: %s", backupDir)
+		log.Printf("weekly-binlog.log not found in backup directory: %s", restorePath)
 	}
-
-	// entries, err := os.ReadDir(backupDir)
-	// if err != nil {
-	// 	log.Printf("Error reading directory: %v", err)
-	// 	return
-	// }
-
-	// sort.Slice(entries, func(i, j int) bool {
-	// 	return entries[i].Name() < entries[j].Name()
-	// })
-
-	// for _, entry := range entries {
-	// 	if entry.IsDir() {
-	// 		dirPath := filepath.Join(backupDir, entry.Name())
-	// 		incrEntries, err := os.ReadDir(dirPath)
-	// 		if err != nil {
-	// 			log.Printf("Error reading incremental backup directory %s: %v", dirPath, err)
-	// 			continue
-	// 		}
-	// 		for _, incrEntry := range incrEntries {
-	// 			if !incrEntry.IsDir() && strings.HasPrefix(incrEntry.Name(), "incr_backup") {
-	// 				incrFilePath := filepath.Join(dirPath, incrEntry.Name())
-	// 				log.Printf("Restoring incremental backup file: %s", incrFilePath)
-	// 				restoreFromRawBinlog(db, incrFilePath)
-	// 			}
-	// 		}
-	// 	}
-	// }
 	return nil
 }
 
+// restoreFromRawBinlog restores data from a raw binary log file.
+//
+// Parameters:
+// - db: The database configuration object.
+// - backupFile: The path to the binary log file.
+//
+// Returns:
+// - error: An error if the restore process fails, otherwise nil.
 func restoreFromRawBinlog(db *DB, backupFile string) error {
 	commandStr := fmt.Sprintf("mysqlbinlog --host=%s --port=%d --user=%s --password=%s %s | mysql --host=%s --port=%d --user=%s --password=%s",
 		db.Host, db.Port, db.User, db.Password, backupFile,
@@ -190,10 +200,10 @@ func restoreFromRawBinlog(db *DB, backupFile string) error {
 	command := exec.Command("sh", "-c", commandStr)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		log.Printf("Failed to restore from binlog: %v, output: %s", err, output)
+		log.Printf("failed to restore from binlog: %v, output: %s", err, output)
 		return err
 	} else {
-		log.Print("Restore from binlog completed successfully")
+		log.Print("restore from binlog completed successfully")
 	}
 	return nil
 }

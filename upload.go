@@ -17,8 +17,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+// StreamBinlogToS3 streams binary log data to an S3 bucket.
 func StreamBinlogToS3(data []byte, fileName string) error {
-	log.Print("Streaming binlog to S3 function started...")
+	log.Print("streaming binlog to S3 function started...")
 
 	bucket := os.Getenv("AWS_S3_BUCKET")
 	if bucket == "" {
@@ -42,9 +43,8 @@ func StreamBinlogToS3(data []byte, fileName string) error {
 
 	go func() {
 		defer pw.Close()
-		_, err := pw.Write(data)
-		if err != nil {
-			log.Printf("Failed writing to pipe: %v", err)
+		if _, err := pw.Write(data); err != nil {
+			log.Printf("failed writing to pipe: %v", err)
 		}
 	}()
 
@@ -60,10 +60,11 @@ func StreamBinlogToS3(data []byte, fileName string) error {
 		return fmt.Errorf("failed to upload to S3: %w", err)
 	}
 
-	log.Printf("Upload successful: %s", result.Location)
+	log.Printf("upload successful: %s", result.Location)
 	return nil
 }
 
+// UploadBufferToS3 uploads a byte slice to an S3 bucket.
 func UploadBufferToS3(data []byte, fileName string) error {
 	log.Print("upload buffer to S3 function started...")
 
@@ -103,6 +104,7 @@ func UploadBufferToS3(data []byte, fileName string) error {
 	return nil
 }
 
+// getS3Key generates the S3 key for a given file name.
 func getS3Key(fileName string) (string, error) {
 	if strings.Contains(fileName, "full_backup") {
 		tokens := strings.SplitN(fileName, "_", 2)
@@ -136,6 +138,7 @@ func getS3Key(fileName string) (string, error) {
 	return "", fmt.Errorf("unknown backup file type: %s", fileName)
 }
 
+// getStreamS3Key generates the S3 key for streaming data.
 func getStreamS3Key(fileName string) (string, error) {
 	if strings.Contains(fileName, "incr_backup") {
 		tokens := strings.Split(fileName, "_")
